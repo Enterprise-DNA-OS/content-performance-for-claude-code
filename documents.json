@@ -1,11 +1,44 @@
 [
   {
-    "name": "example",
-    "title": "TODO(author): the first document this industry must produce",
-    "for_each": "select gen_random_uuid() as id, 'Example' as name",
+    "name": "story-brief",
+    "title": "Draft editorial story brief",
+    "for_each": "select id,title from stories order by title",
+    "file": "title",
+    "sections": [
+      {
+        "title": "Story",
+        "sql": "select title,url,section,author_credit,published_on from stories where id=$1",
+        "layout": "record"
+      },
+      {
+        "title": "Recorded performance",
+        "sql": "select s.start_on,s.end_on,m.views,m.engaged_minutes,s.coverage from metrics m join snapshots s on s.id=m.snapshot_id where m.story_id=$1 order by s.end_on desc"
+      },
+      {
+        "title": "Refresh work",
+        "sql": "select code,description,owner,due_on,status,evidence from actions where story_id=$1 order by due_on"
+      }
+    ]
+  },
+  {
+    "name": "editorial-action-register",
+    "title": "Draft editorial action register",
+    "for_each": "select id,name from publications order by code",
     "file": "name",
     "sections": [
-      { "title": "Details", "sql": "select 'replace me' as item, $1::text as record_id" }
+      {
+        "title": "Publication",
+        "sql": "select code,name,purpose,privacy_review_due,access_review_due from publications where id=$1",
+        "layout": "record"
+      },
+      {
+        "title": "Actions",
+        "sql": "select a.code,s.title,a.description,a.owner,a.due_on,a.status,a.evidence from actions a join stories s on s.id=a.story_id where s.publication_id=$1 order by a.due_on"
+      },
+      {
+        "title": "Import windows",
+        "sql": "select start_on,end_on,timezone,scope,coverage,source_name from snapshots where publication_id=$1 order by end_on desc"
+      }
     ]
   }
 ]

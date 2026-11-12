@@ -1,43 +1,53 @@
-# Content Performance for Claude Code: operating instructions
+# Content Performance for Claude Code
 
-This file is the brain. Claude Code reads it at the start of every session. It says who this is for, how work gets done, and the one right way to do each recurring job.
+For a publication's editorial review desk. Read docs/cli.md and the matching recipe. Every answer about records starts with the CLI.
 
-## Who this is for
+## Rules
 
-- **Business:** [YOUR BUSINESS]
-- **Operator:** [YOUR NAME], [your role]
-- **What matters most:** [the one or two outcomes you care about]
+- Never send, publish stories, alter tracking, or delete records. Draft locally.
+- Read the source period, timezone, scope and coverage before interpreting metrics. Partial exports cover included stories only.
+- Never sum unique visitors across stories, treat missing stories as zero, or claim a refresh caused an uplift.
+- Source snapshots and notes are immutable. Record corrections in a new labelled series or a new note.
+- All writes need a named actor. Names are audit labels, not authenticated identity.
+- Never seed a live database. Keep business imports, generated files and credentials out of Git.
+- Shared use requires controlled database access, backups and tested recovery.
+- PGlite is the local database. DATABASE_URL selects Postgres. These are trusted-operator connections.
 
-Fill this in once. A worker with context knows. A worker without it guesses.
+## Routing
 
-## How to work
-
-1. **Take a brief, not a script.** The operator describes the outcome. You run the right command and present the answer.
-2. **Read before you write.** Before drafting anything about a record, read its full history first.
-3. **Plain language.** Short sentences. No filler. Numbers in tables.
-4. **Silent success, loud problems.** No play-by-play. Say what broke and what you did about it.
-5. **Stop at the line.** Anything that sends, deletes, or faces a customer waits for a yes in this session.
-
-## Routing table: one right way for each recurring job
-
-| When the operator asks for... | Use this |
+| Job | Recipe |
 |---|---|
-| <!-- TODO(author): one row per slash command --> | `/...` |
+| publications | /publications |
+| stories | /stories |
+| morning-brief | /morning-brief |
+| declines | /declines |
+| evergreen | /evergreen |
+| low-engagement | /low-engagement |
+| search-led | /search-led |
+| section-review | /section-review |
+| author-review | /author-review |
+| refresh-queue | /refresh-queue |
+| actions-due | /actions-due |
+| workload | /workload |
+| completed-actions | /completed-actions |
+| compliance | /compliance |
+| attention | /attention |
+| imports | /imports |
+| notes | /notes |
+| audit | /audit |
+| story | /story |
+| add-publication | /add-publication |
+| add-story | /add-story |
+| add-action | /add-action |
+| complete-action | /complete-action |
+| log | /log |
+| review-privacy | /review-privacy |
+| import | /import |
+| weekly-review | /weekly-review |
+| draft-story-brief | /draft-story-brief |
+| draft-refresh-list | /draft-refresh-list |
+| export | /export |
+| customise | /customise |
+| new-view | /new-view |
 
-If an ask fits nothing here, run the CLI directly (`npm run <cli> -- --help`) and then propose a new command for it.
-
-## Hard rules
-
-- Never send email or messages from here. Draft to `drafts/`, a person sends.
-- Never delete records without an explicit yes in this session. Prefer marking closed or archived.
-- Never invent a record. If a name is ambiguous, list the candidates and ask.
-- The database is the source of truth. If the answer is not in it, say so.
-
-## Where things live
-
-- `scripts/` the CLI. `scripts/lib/db.mjs` picks `DATABASE_URL` (Postgres, Supabase) or the embedded database in `.data/`.
-- `supabase/migrations/` the schema, plain SQL. `npm run migrate` applies it.
-- `.claude/commands/` the slash commands. Add one every time the same ask comes twice.
-- `docs/` the thesis and the guide for moving off Parse.ly.
-
-Built by Enterprise DNA. Installed and run for you as part of Omni: https://enterprisedna.co/omni/instead-of/parsely
+The one CLI is scripts/content.mjs. Run npm run content -- help. Migrations live in supabase/migrations. Documents and views use documents.json, views.json and brand.json.

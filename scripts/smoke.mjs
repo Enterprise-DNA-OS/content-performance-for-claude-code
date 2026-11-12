@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import {spawnSync} from 'node:child_process';
+import {getDb,REPO_ROOT} from './lib/db.mjs';
+import {migrate} from './migrate.mjs';
+import {seed} from './seed.mjs';
+import {run,reads,commands,resolve,date,canonical,parseExport,format} from './content.mjs';
+const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'content-performance-'));
+process.env.DATA_DIR=path.join(tmp,'db');process.env.OUTPUT_DIR=tmp;process.env.DATABASE_URL=process.env.CONTENT_TEST_POSTGRES_URL||'';
+let db,n=0;
+const eq=(a,b)=>{assert.deepEqual(a,b);n++;};const ok=x=>{assert.ok(x);n++;};const bad=async(f,re)=>{await assert.rejects(f,re);n++;};const throws=(f,re)=>{assert.throws(f,re);n++;};
+const call=(...a)=>run(db,a);const write=(cmd,o={})=>call(cmd,...Object.entries({actor:'Test editor',...o}).map(([k,v])=>`--${k}=${v}`));
+try{
+ throws(()=>date('2026-02-30'),/real/);throws(()=>canonical('https://example.com/a?email=x'),/canonical/);throws(()=>canonical('javascript:alert(1)'),/canonical/);
+ const bytes=fs.readFileSync(path.join(REPO_ROOT,'tests/fixtures/parsely-posts.csv'));
+ const parsed=parseExport(bytes);eq(parsed[0].fields.views,1200);eq(parsed[1].fields.visitors,null);eq(parsed[1].fields.search_refs,null);eq(parsed[1].fields.title,'A headline with "quotes"');
+ throws(()=>parseExport(Buffer.from('URL,Title,Views\nhttps://example.com/a,Title,-1')),/number/);
+ throws(()=>parseExport(Buffer.from('URL,Title,Views\nhttps://example.com/a,Title,1.5')),/integer/);
+ throws(()=>parseExport(Buffer.from('URL,Title,Views\nhttps://example.com/a,Title,NaN')),/number/);
+ throws(()=>parseExport(Buffer.from('URL,Title,Views\nhttps://example.com/a,Title,1\nhttps://example.com/a,Title,2')),/Duplicate story/);
+ throws(()=>parseExport(Buffer.from('URL,Title,Views,email\nhttps://example.com/a,Title,1,a@example.com')),/audience/);
+ throws(()=>parseExport(Buffer.from('URL,Title,Views\nhttps://example.com/a,"bad,1')),/unclosed/);
+ throws(()=>parseExport(bytes,{viewz:'Views'}),/mapping/);throws(()=>parseExport(bytes,{views:'Gone'}),/missing/);
+ db=await getDb();eq((await migrate(db)).ran.length,1);eq((await migrate(db)).ran.length,0);await seed(db);
+ const original=(await db.query('select count(*)::int n from audit_log'))[0].n;await seed(db);eq((await db.query('select count(*)::int n from audit_log'))[0].n,original);
+ for(const c of Object.keys(reads))ok(Array.isArray(await call(c)));
+ eq((await call('declines'))[0].change_pct,'-50.00');eq((await call('declines'))[0].views,1200);
+ eq((await call('low-engagement'))[0].title,'Harbour business outlook');eq((await call('evergreen')).length,2);
+ eq((await call('refresh-queue'))[0].title,'Coastal freight guide');eq((await call('workload')).find(r=>r.owner==='Mere Lane').overdue_actions,1);
+ ok((await call('compliance')).some(r=>r.rule==='P09'));ok((await call('compliance')).some(r=>r.rule==='D01'));
+ const st=(await call('story','coastal freight'))[0];eq(st.periods.length,2);eq(st.actions.length,1);
+ // Real ambiguous title matches list candidates and fail.
+ await bad(()=>call('not-a-command'),/Unknown command/);await bad(()=>call('stories','--limit=3'),/Unknown flag/);
+ await bad(()=>call('add-publication','--code=NO'),/actor/);
+ await write('add-publication',{code:'IMP',name:'Imported publication'});
+ await write('add-publication',{code:'IMP2',name:'Other imported publication'});
+ await bad(()=>resolve(db,'publications','IM'),/Ambiguous.*IMP.*IMP2/);
+ eq((await call('help'))[0].commands.includes('import'),true);
+ const file=path.join(tmp,'posts.csv');fs.writeFileSync(file,bytes);
+ const imp=(extra={})=>call('import','parsely',...Object.entries({actor:'Importer',publication:'IMP',file,start:'2025-01-01',end:'2025-01-07',timezone:'Pacific/Auckland',scope:'Posts, all traffic, all audiences',coverage:'partial',...extra}).map(([k,v])=>`--${k}=${v}`));
+ eq((await imp({'dry-run':true}))[0].rows,2);eq((await call('imports')).length,2);
+ eq((await imp())[0].imported,2);eq((await imp())[0].skipped,true);
+ const source=(await db.query("select * from snapshots where source_name='posts.csv'"))[0];eq(Buffer.from(source.source_base64,'base64'),bytes);
+ const m=(await db.query('select * from metrics where snapshot_id=$1 order by source_row',[source.id]));eq(m[0].raw_row.Extra,'Preserved source value');eq(m[1].visitors,null);
+ await bad(()=>imp({start:'2025-01-05',end:'2025-01-10'}),/Overlapping/);
+ await bad(()=>imp({timezone:'Not/AZone'}),/timezone/);await bad(()=>imp({end:'2024-12-01'}),/precedes/);
+ const broken=path.join(tmp,'broken.csv');fs.writeFileSync(broken,bytes.toString().replace('500,,125','-5,,125'));
+ await bad(()=>imp({file:broken,start:'2025-01-08',end:'2025-01-14'}),/number/);eq((await call('imports')).length,3);
+ // Late failure inside a transaction must roll back the new snapshot and rows.
+ await db.exec("create function reject_test_metric() returns trigger language plpgsql as $$ begin if new.views=500 then raise exception 'forced test failure'; end if; return new; end $$; create trigger reject_test before insert on metrics for each row execute function reject_test_metric();");
+ await bad(()=>imp({start:'2025-01-08',end:'2025-01-14'}),/forced test failure/);
+ eq((await call('imports')).length,3);await db.exec('drop trigger reject_test on metrics; drop function reject_test_metric();');
+ eq((await imp({start:'2025-01-08',end:'2025-01-14'}))[0].imported,2);
+ eq((await db.query("select count(*)::int n from story_comparison where publication='IMP'"))[0].n,2);
+ await imp({start:'2025-01-15',end:'2025-01-21',scope:'Posts, search only'});
+ eq((await db.query("select count(*)::int n from story_comparison where publication='IMP'"))[0].n,0);
+ ok((await call('compliance')).some(r=>r.rule==='D03'&&r.reference==='IMP'));
+ await bad(()=>db.query('update metrics set views=0 where id=$1',[m[0].id]),/append-only/);
+ await bad(()=>db.query('delete from snapshots where id=$1',[source.id]),/append-only/);
+ await write('add-story',{publication:'IMP',url:'https://fixture.example/x',title:'Test <script>alert(1)</script>',author:'Editor',section:'News',published:'2025-01-01'});
+ await write('add-action',{code:'TEST-1',story:'https://fixture.example/x',description:'Check links',owner:'Editor',due:'2026-01-01'});
+ await bad(()=>write('add-action',{code:'BAD',story:'https://fixture.example/x',description:'Check',owner:'E',due:'2026-02-30'}),/real/);
+ await bad(()=>write('complete-action',{action:'TEST-1',completed:'2999-01-01',evidence:'Checked'}),/future/);
+ await write('complete-action',{action:'TEST-1',completed:'2026-01-02',evidence:'Links checked against source'});
+ await bad(()=>write('complete-action',{action:'TEST-1',completed:'2026-01-02',evidence:'Another'}),/already/);
+ eq((await call('completed-actions')).find(r=>r.code==='TEST-1').evidence,'Links checked against source');
+ await write('log',{story:'https://fixture.example/x',body:'Named editor checked the article'});
+ await write('review-privacy',{publication:'IMP',purpose:'Manage editorial follow-up','privacy-due':'2099-01-01','access-due':'2099-01-01',evidence:'Reviewed operator access and retention purpose'});
+ ok(!(await call('compliance')).some(r=>r.reference==='IMP'&&r.rule.startsWith('P')));
+ const hist=await db.query("select * from audit_log where entity='actions' and operation='UPDATE'");eq(hist[0].before_row.status,'open');eq(hist[0].after_row.status,'done');
+ for(const c of ['weekly-review','draft-refresh-list','draft-story-brief']){const out=(await call(c,...(c==='draft-story-brief'?['https://fixture.example/x']:[])))[0].file;const html=fs.readFileSync(out,'utf8');ok(html.includes('Draft'));ok(!html.includes('<script>alert(1)</script>'));}
+ const out=path.join(tmp,'export');eq((await call('export',`--out=${out}`))[0].collections,7);eq(fs.readdirSync(out).length,7);await bad(()=>call('export',`--out=${out}`),/exists/);
+ ok(format(await call('declines')).includes('Coastal'));eq(commands.length,31);
+ await db.close();db=null;
+ for(const script of ['view','docs']){const p=spawnSync(process.execPath,[`scripts/${script}.mjs`],{cwd:REPO_ROOT,env:process.env,encoding:'utf8'});eq(p.status,0);}
+ const json=spawnSync(process.execPath,['scripts/content.mjs','stories','--json'],{cwd:REPO_ROOT,env:process.env,encoding:'utf8'});eq(json.status,0);ok(Array.isArray(JSON.parse(json.stdout)));
+ // Use deterministic publication ambiguity through add-story.
+ const ambiguous2=spawnSync(process.execPath,['scripts/content.mjs','add-story','--actor=Test','--publication=IM','--url=https://example.com/new','--title=New'],{cwd:REPO_ROOT,env:process.env,encoding:'utf8'});eq(ambiguous2.status,1);ok(ambiguous2.stderr.includes('Candidates:'));
+ console.log(`PASS: ${n} assertions; all ${commands.length} CLI commands; isolated ${process.env.DATABASE_URL?'Postgres':'PGlite'} database.`);
+}finally{if(db)await db.close();fs.rmSync(tmp,{recursive:true,force:true});}

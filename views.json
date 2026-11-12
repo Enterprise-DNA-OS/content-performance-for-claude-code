@@ -1,13 +1,30 @@
 [
   {
-    "name": "week",
-    "title": "This week",
-    "subtitle": "Content Performance for Claude Code: what needs attention, rendered by npm run view",
+    "name": "editorial-week",
+    "title": "Editorial performance review",
+    "subtitle": "Imported snapshots. Partial exports cover included stories only.",
     "sections": [
       {
-        "title": "Needs attention",
-        "note": "TODO(author): point this at the industry's attention view (overdue, stuck, quiet).",
-        "sql": "select 'replace me' as item, 'TODO(author)' as why"
+        "title": "Current stories",
+        "sql": "select publication,title,views,seconds_per_view,coverage from story_performance order by views desc"
+      },
+      {
+        "title": "Comparable declines",
+        "sql": "select title,previous_views,views,change_pct,coverage from story_comparison where change_pct<0 order by change_pct"
+      },
+      {
+        "title": "Follow-up",
+        "sql": "select code,title,owner,due_on from actions_due order by due_on"
+      }
+    ]
+  },
+  {
+    "name": "record-quality",
+    "title": "Record quality and privacy review",
+    "sections": [
+      {
+        "title": "Checks requiring review",
+        "sql": "select * from compliance_checks order by rule,reference"
       }
     ]
   }
