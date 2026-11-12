@@ -6,11 +6,11 @@
     "sections": [
       {
         "title": "Current stories",
-        "sql": "select publication,title,views,seconds_per_view,coverage from story_performance order by views desc"
+        "sql": "select publication,title,start_on,end_on,views,seconds_per_view,coverage from story_performance order by views desc"
       },
       {
         "title": "Comparable declines",
-        "sql": "select title,previous_views,views,change_pct,coverage from story_comparison where change_pct<0 order by change_pct"
+        "sql": "select title,previous_start,start_on,end_on,previous_views,views,change_pct,coverage from story_comparison where change_pct<0 order by change_pct"
       },
       {
         "title": "Follow-up",
